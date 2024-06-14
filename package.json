@@ -7,10 +7,7 @@
   "license": "(Apache-2.0 OR MIT)",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
-  "files": [
-    "lib",
-    "src"
-  ],
+  "files": ["lib", "src"],
   "scripts": {
     "check": "tsc --noEmit",
     "codegen": "graphclient build --dir ./src",
@@ -30,21 +27,22 @@
     "graphql": "16.7.1",
     "hdwallet-babyjub": "^0.0.2",
     "idb": "^7.0.0",
+    "kalypso-sdk": "^1.0.26",
     "libzkbob-rs-wasm-web": "1.7.0-beta5",
     "libzkbob-rs-wasm-web-mt": "1.7.0-beta5",
+    "promise-retry": "^2.0.1",
     "promise-throttle": "^1.1.2",
     "regenerator-runtime": "^0.13.9",
     "tronweb": "^5.3.0",
     "wasm-feature-detect": "^1.2.11",
     "web3": "1.8.0",
-    "web3-utils": "1.8.0",
-    "promise-retry": "^2.0.1"
+    "web3-utils": "1.8.0"
   },
   "devDependencies": {
     "@types/ethereum-protocol": "^1.0.1",
     "@types/node": "^20.3.3",
-    "@types/web3": "1.0.20",
     "@types/promise-retry": "^1.1.3",
+    "@types/web3": "1.0.20",
     "ts-loader": "^9.2.6",
     "typescript": "^5.1.6",
     "webpack": "^5.64.2",

@@ -1,0 +1,28 @@
+{
+    "payment_token": "0x01d84D33CC8636F83d2bb771e184cE57d8356863",
+    "staking_token": "0xdb69299dDE4A00c99b885D9f8748B2AeD1Fe4Ed4",
+    "mock_attestation_verifier": "0x1dC40628443D93eA82945a9206e0b527BA3EA028",
+    "attestation_verifier": "0x63EEf1576b477Aa60Bfd7300B2C85b887639Ac1b",
+    "entity_registry": "0xFFf22f221B9dB47a43cA5c8f48f7915c7957539c",
+    "generator_registry": "0xCf30295AfC4F12FfAC6EE96Da3607e7749881BA7",
+    "dispute": "0x48b28BC18E9d9EcDFa7A2CF8b1DDa2668bC005b2",
+    "proof_market_place": "0xBD3700b9e4292C4842e6CB87205192Fa96e8Ed05",
+    "transfer_verifier_wrapper": "0x30A5fFf0D0d54fab407a409467835e56830a7471",
+    "zkb_verifier_wrapper": "0xeE89C22838a691d03fB3b6f47C387d06917C0bBD",
+    "priority_list": "0x138e29f7804Bfe8225E431c79764663620AEac54",
+    "input_and_proof_format": "0x43F4159c011f6d05957182748C1F2b77C74fFDB5",
+    "generatorEnclave": {
+      "url": "http://13.201.226.90:5000",
+      "utilityUrl": "http://13.201.226.90:1500"
+    },
+    "ivsEnclave": {
+      "url": "http://not deployed yet:5000",
+      "utilityUrl": "http://not deployed yet:1500"
+    },
+    "matchingEngineEnclave": {
+      "url": "http://13.201.131.193:5000",
+      "utilityUrl": "http://13.201.131.193:1500"
+    },
+    "checkInputUrl": "http://not deployed yet:3030",
+    "attestationVerifierEndPoint": "http://13.201.207.60:1400"
+  }
