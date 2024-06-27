@@ -1,10 +1,10 @@
 import { L1TxState, NetworkBackend, PreparedTransaction } from '..';
 import { InternalError, TxType } from '../../index';
-import { DDBatchTxDetails, DirectDeposit, DirectDepositState, PoolTxDetails, PoolTxType, RegularTxDetails, RegularTxType } from '../../tx';
+import { DDBatchTxDetails, DirectDeposit, DirectDepositState, PoolTxDetails, PoolTxType, RegularTxDetails, RegularTxType, TxCalldataVersion } from '../../tx';
 import tokenAbi from './abi/usdt-abi.json';
 import { ddContractABI as ddAbi, poolContractABI as poolAbi, accountingABI} from '../evm/evm-abi';
-import { bufToHex, hexToBuf, toTwosComplementHex, truncateHexPrefix } from '../../utils';
-import { CALLDATA_BASE_LENGTH, decodeEvmCalldata, estimateEvmCalldataLength, getCiphertext } from '../evm/calldata';
+import { addHexPrefix, bufToHex, hexToBuf, toTwosComplementHex, truncateHexPrefix } from '../../utils';
+import { CalldataInfo, decodeEvmCalldata, getCiphertext, parseTransactCalldata } from '../evm/calldata';
 import { hexToBytes } from 'web3-utils';
 import { PoolSelector } from '../evm';
 import { MultiRpcManager, RpcManagerDelegate } from '../rpcman';
@@ -599,7 +599,7 @@ export class TronNetwork extends MultiRpcManager implements NetworkBackend, RpcM
     }
 
     public addressToBytes(address: string): Uint8Array {
-        const hexAddr = TronWeb.address.toHex(address);
+        const hexAddr = TronWeb.address.toHex(address.length > 0 ? address : ZERO_ADDRESS);
         if (typeof hexAddr !== 'string' || hexAddr.length != 42) {
             throw new InternalError(`Incorrect address format`);
         }
@@ -698,40 +698,16 @@ export class TronNetwork extends MultiRpcManager implements NetworkBackend, RpcM
 
                 const txSelector = txData.slice(0, 8).toLowerCase();
                 if (txSelector == PoolSelector.Transact) {
-                    const tx = decodeEvmCalldata(txData);
-                    const feeAmount = BigInt('0x' + tx.memo.slice(0, 16));
-                    
-                    const txInfo = new RegularTxDetails();
-                    txInfo.txType = tx.txType;
-                    txInfo.tokenAmount = tx.tokenAmount;
-                    txInfo.feeAmount = feeAmount;
-                    txInfo.txHash = poolTxHash;
-                    txInfo.isMined = isMined
-                    txInfo.timestamp = timestamp / 1000;    // timestamp should be in seconds
-                    txInfo.nullifier = '0x' + toTwosComplementHex(BigInt((tx.nullifier)), 32);
-                    txInfo.commitment = '0x' + toTwosComplementHex(BigInt((tx.outCommit)), 32);
-                    txInfo.ciphertext = getCiphertext(tx);
-
-                    // additional tx-specific fields for deposits and withdrawals
-                    if (tx.txType == RegularTxType.Deposit) {
-                        if (tx.extra && tx.extra.length >= 128) {
-                            const fullSig = this.toCanonicalSignature(tx.extra.slice(0, 128));
-                            txInfo.depositAddr = await this.recoverSigner(txInfo.nullifier, fullSig);
-                        } else {
-                            // incorrect signature
-                            throw new InternalError(`No signature for approve deposit`);
-                        }
-                    } else if (tx.txType == RegularTxType.BridgeDeposit) {
-                        txInfo.depositAddr = this.bytesToAddress(hexToBuf(tx.memo.slice(32, 72), 20));
-                    } else if (tx.txType == RegularTxType.Withdraw) {
-                        txInfo.withdrawAddr = this.bytesToAddress(hexToBuf(tx.memo.slice(32, 72), 20));
-                    }
-
-                    return {
-                        poolTxType: PoolTxType.Regular,
-                        details: txInfo,
-                        index,
-                    };
+                    const txInfo = await parseTransactCalldata(txData, this);
+                        txInfo.txHash = poolTxHash;
+                        txInfo.isMined = isMined;
+                        txInfo.timestamp = timestamp / 1000;    // timestamp should be in seconds but tronweb returns ms
+                        
+                        return {
+                            poolTxType: PoolTxType.Regular,
+                            details: txInfo,
+                            index,
+                        };
                 } else if (txSelector == PoolSelector.AppendDirectDeposit) {
                     const txInfo = new DDBatchTxDetails();
                     txInfo.txHash = poolTxHash;
@@ -747,7 +723,7 @@ export class TronNetwork extends MultiRpcManager implements NetworkBackend, RpcM
                         index,
                     };
                 } else {
-                    throw new InternalError(`[EvmNetwork]: Cannot decode calldata for tx ${poolTxHash} (incorrect selector ${txSelector})`);
+                    throw new InternalError(`[TronNetwork]: Cannot decode calldata for tx ${poolTxHash} (incorrect selector ${txSelector})`);
                 }
             } else {
               console.warn(`[TronNetwork]: cannot get native tx ${poolTxHash} (tx still not mined?)`);
@@ -759,12 +735,12 @@ export class TronNetwork extends MultiRpcManager implements NetworkBackend, RpcM
         return null;
     }
 
-    public calldataBaseLength(): number {
-        return CALLDATA_BASE_LENGTH;
+    public calldataBaseLength(ver: TxCalldataVersion): number {
+        return CalldataInfo.baseLength(ver);
     }
 
-    public estimateCalldataLength(txType: RegularTxType, notesCnt: number, extraDataLen: number = 0): number {
-        return estimateEvmCalldataLength(txType, notesCnt, extraDataLen)
+    public estimateCalldataLength(ver: TxCalldataVersion, txType: RegularTxType, notesCnt: number, extraDataLen: number = 0): number {
+        return CalldataInfo.estimateEvmCalldataLength(ver, txType, notesCnt, extraDataLen)
     }
 
     public async getTransactionState(txHash: string): Promise<L1TxState> {
@@ -924,7 +900,7 @@ export class TronNetwork extends MultiRpcManager implements NetworkBackend, RpcM
 
             if (curBlock < blockNumber) {
                 if (!waitMsgLogged) {
-                    console.warn(`[EvmNetwork]: waiting for a block ${blockNumber} (current ${curBlock})...`);
+                    console.warn(`[TronNetwork]: waiting for a block ${blockNumber} (current ${curBlock})...`);
                     waitMsgLogged = true;
                 }
 
@@ -939,7 +915,7 @@ export class TronNetwork extends MultiRpcManager implements NetworkBackend, RpcM
         } while(curBlock < blockNumber);
 
         if (waitMsgLogged) {
-            console.log(`[EvmNetwork]: internal provider was synced with block ${blockNumber}`);
+            console.log(`[TronNetwork]: internal provider was synced with block ${blockNumber}`);
         }
 
         return true;

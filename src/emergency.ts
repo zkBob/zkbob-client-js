@@ -151,10 +151,14 @@ export class ForcedExitProcessor {
       // create regular withdraw tx
       const oneTx: IWithdrawData = {
           amount: requestedAmount.toString(),
-          fee: '0',
           to: this.network.addressToBytes(toAddress),
           native_amount: '0',
           energy_amount: '0',
+          proxy: this.network.addressToBytes(''),
+          prover: this.network.addressToBytes(''),
+          proxy_fee: '0',
+          prover_fee: '0',
+          data: [],
       };
       const oneTxData = await this.state.createWithdrawalOptimistic(oneTx, ZERO_OPTIMISTIC_STATE);
 

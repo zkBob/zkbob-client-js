@@ -349,6 +349,29 @@ export const poolContractABI: AbiItem[] = [
         type: 'function'
     },
     {
+        inputs: [{
+            internalType: 'uint256[]',
+            name: '_indices',
+            type: 'uint256[]'
+        }, {
+            internalType: 'uint256',
+            name: '_out_commit',
+            type: 'uint256'
+        }, {
+            internalType: 'uint256[8]',
+            name: '_batch_deposit_proof',
+            type: 'uint256[8]'
+        }, {
+            internalType: 'address',
+            name: '_prover',
+            type: 'address'
+        }],
+        name: 'appendDirectDeposits',
+        outputs: [],
+        stateMutability: 'nonpayable',
+        type: 'function'
+    },
+    {
         anonymous: false,
         inputs: [{
             indexed: true,

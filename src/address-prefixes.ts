@@ -30,8 +30,8 @@ export const hardcodedPrefixes: ZkAddressPrefix[] = [
     // Staging address prefixes
     {
         poolId: 0x000000,
-        prefix: 'zkbob_sepolia',
-        name: 'BOB on Sepolia testnet'
+        prefix: 'zkbob_sepold',
+        name: 'BOB on Sepolia testnet [the first dev pool, deprecated]'
     },
     {
         poolId: 0xffff02,
