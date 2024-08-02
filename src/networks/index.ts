@@ -1,6 +1,6 @@
 import { ZkBobState } from "../state";
 import { EvmNetwork, InternalError, TxType } from "..";
-import { DirectDeposit, PoolTxDetails } from "../tx";
+import { DirectDeposit, PoolTxDetails, TxCalldataVersion } from "../tx";
 import { TronNetwork } from "./tron";
 import { CommittedForcedExit, FinalizedForcedExit, ForcedExitRequest } from "../emergency";
 
@@ -78,9 +78,10 @@ export interface NetworkBackend {
     getNativeBalance(address: string): Promise<bigint>;
     getNativeNonce(address: string): Promise<number>;
     getTxDetails(index: number, poolTxHash: string, state: ZkBobState): Promise<PoolTxDetails | null>;
-    calldataBaseLength(): number;
-    estimateCalldataLength(txType: TxType, notesCnt: number, extraDataLen: number): number;
+    calldataBaseLength(ver: TxCalldataVersion): number;
+    estimateCalldataLength(ver: TxCalldataVersion, txType: TxType, notesCnt: number, extraDataLen: number): number;
     getTransactionState(txHash: string): Promise<L1TxState>;
+    abiDecodeParameters(abi: any, encodedParams: string): Promise<any>;
 
     // syncing with external providers
     getBlockNumber(): Promise<number>;

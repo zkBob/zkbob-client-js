@@ -1,6 +1,6 @@
 {
   "name": "zkbob-client-js",
-  "version": "5.5.2",
+  "version": "6.0.0",
   "description": "zkBob integration library",
   "repository": "git@github.com:zkBob/libzkbob-client-js.git",
   "author": "Dmitry Vdovin <voidxnull@gmail.com>",
@@ -30,8 +30,8 @@
     "graphql": "16.7.1",
     "hdwallet-babyjub": "^0.0.2",
     "idb": "^7.0.0",
-    "libzkbob-rs-wasm-web": "1.6.0",
-    "libzkbob-rs-wasm-web-mt": "1.6.0",
+    "libzkbob-rs-wasm-web": "1.7.0-beta5",
+    "libzkbob-rs-wasm-web-mt": "1.7.0-beta5",
     "promise-throttle": "^1.1.2",
     "regenerator-runtime": "^0.13.9",
     "tronweb": "^5.3.0",

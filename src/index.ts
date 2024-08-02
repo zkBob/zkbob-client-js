@@ -6,10 +6,11 @@ export { ClientConfig, AccountConfig, accountId,
 export { ZkBobClient, TransferConfig, TransferRequest, FeeAmount,
         ClientState, ClientStateCallback,
       } from './client';
-export { ZkBobProvider as ZkBobAccountlessClient, GiftCardProperties } from './client-provider';
+export { ZkBobProvider as ZkBobAccountlessClient, GiftCardProperties, TxFee, SequencerFee } from './client-provider';
 export { SyncStat } from './state';
-export { RegularTxType as TxType, DirectDeposit } from './tx';
-export { RelayerFee } from './services/relayer'
+export { RegularTxType as TxType, DirectDeposit, TxCalldataVersion } from './tx';
+export { RelayerFee, SequencerEndpoint, SequencerJob } from './services/relayer'
+export { ProxyFee } from './services/proxy'
 export { HistoryRecord, HistoryTransactionType, HistoryRecordState, ComplianceHistoryRecord } from './history';
 export { EphemeralAddress, EphemeralPool } from './ephemeral';
 export { ServiceType, ServiceVersion } from './services/common';

@@ -11,6 +11,7 @@ export interface IZkBobService {
 
 export enum ServiceType {
     Relayer = "Relayer",
+    Proxy = "Proxy",
     DelegatedProver = "Delegated Prover"
 }
 

@@ -7,6 +7,7 @@ import { InternalError } from './errors';
 import { ZkBobState } from './state';
 import { NetworkBackend } from './networks';
 import { ZkBobSubgraph } from './subgraph';
+import { SequencerJob } from './services/relayer';
 
 const LOG_HISTORY_SYNC = false;
 const MAX_SYNC_ATTEMPTS = 3;  // if sync was not fully completed due to RPR errors
@@ -56,6 +57,7 @@ export interface TokensMoving {
 export class HistoryRecord {
   constructor(
     public type: HistoryTransactionType,
+    public commitment: bigint, // transaction identification
     public timestamp: number,
     public actions: TokensMoving[],
     public fee: bigint,
@@ -72,11 +74,12 @@ export class HistoryRecord {
     ts: number,
     txHash: string,
     pending: boolean,
+    commitment?: bigint,
     extraInfo?: any,
   ): Promise<HistoryRecord> {
     const action: TokensMoving = {from, to: "", amount, isLoopback: false};
     const state: HistoryRecordState = pending ? HistoryRecordState.Pending : HistoryRecordState.Mined;
-    return new HistoryRecord(HistoryTransactionType.Deposit, ts, [action], fee, txHash, state, undefined, extraInfo);
+    return new HistoryRecord(HistoryTransactionType.Deposit, commitment ?? 0n, ts, [action], fee, txHash, state, undefined, extraInfo);
   }
 
   public static async transferIn(
@@ -85,11 +88,12 @@ export class HistoryRecord {
     ts: number,
     txHash: string,
     pending: boolean,
+    commitment?: bigint,
     extraInfo?: any,
   ): Promise<HistoryRecord> {
     const actions: TokensMoving[] = transfers.map(({to, amount}) => { return ({from: "", to, amount, isLoopback: false}) });
     const state: HistoryRecordState = pending ? HistoryRecordState.Pending : HistoryRecordState.Mined;
-    return new HistoryRecord(HistoryTransactionType.TransferIn, ts, actions, fee, txHash, state, undefined, extraInfo);
+    return new HistoryRecord(HistoryTransactionType.TransferIn, commitment ?? 0n, ts, actions, fee, txHash, state, undefined, extraInfo);
   }
 
   public static async transferOut(
@@ -99,13 +103,14 @@ export class HistoryRecord {
     txHash: string,
     pending: boolean,
     getIsLoopback: (shieldedAddress: string) => Promise<boolean>,
+    commitment?: bigint,
     extraInfo?: any,
   ): Promise<HistoryRecord> {
     const actions: TokensMoving[] = await Promise.all(transfers.map(async ({to, amount}) => { 
       return ({from: "", to, amount, isLoopback: await getIsLoopback(to)})
     }));
     const state: HistoryRecordState = pending ? HistoryRecordState.Pending : HistoryRecordState.Mined;
-    return new HistoryRecord(HistoryTransactionType.TransferOut, ts, actions, fee, txHash, state, undefined, extraInfo);
+    return new HistoryRecord(HistoryTransactionType.TransferOut, commitment ?? 0n, ts, actions, fee, txHash, state, undefined, extraInfo);
   }
 
   public static async withdraw(
@@ -115,11 +120,12 @@ export class HistoryRecord {
     ts: number,
     txHash: string,
     pending: boolean,
+    commitment?: bigint,
     extraInfo?: any,
   ): Promise<HistoryRecord> {
     const action: TokensMoving = {from: "", to, amount, isLoopback: false};
     const state: HistoryRecordState = pending ? HistoryRecordState.Pending : HistoryRecordState.Mined;
-    return new HistoryRecord(HistoryTransactionType.Withdrawal, ts, [action], fee, txHash, state, undefined, extraInfo);
+    return new HistoryRecord(HistoryTransactionType.Withdrawal, commitment ?? 0n, ts, [action], fee, txHash, state, undefined, extraInfo);
   }
 
   public static async aggregateNotes(
@@ -127,10 +133,11 @@ export class HistoryRecord {
     ts: number,
     txHash: string,
     pending: boolean,
+    commitment?: bigint,
     extraInfo?: any,
   ): Promise<HistoryRecord> {
     const state: HistoryRecordState = pending ? HistoryRecordState.Pending : HistoryRecordState.Mined;
-    return new HistoryRecord(HistoryTransactionType.AggregateNotes, ts, [], fee, txHash, state, undefined, extraInfo);
+    return new HistoryRecord(HistoryTransactionType.AggregateNotes, commitment ?? 0n, ts, [], fee, txHash, state, undefined, extraInfo);
   }
 
   public static async directDeposit(
@@ -145,7 +152,7 @@ export class HistoryRecord {
   ): Promise<HistoryRecord> {
     const actions: TokensMoving[] = [ {from, to, amount, isLoopback: false} ];
     const state: HistoryRecordState = pending ? HistoryRecordState.Pending : HistoryRecordState.Mined;
-    return new HistoryRecord(HistoryTransactionType.DirectDeposit, ts, actions, fee, txHash, state, undefined, extraInfo);
+    return new HistoryRecord(HistoryTransactionType.DirectDeposit, 0n, ts, actions, fee, txHash, state, undefined, extraInfo);
   }
 
   public toJson(): string {
@@ -198,7 +205,7 @@ export class ComplianceHistoryRecord extends HistoryRecord {
     chunks: TxMemoChunk[],
     inputs: TxInput | undefined, // undefined for incoming transfers
   ) {
-    super(rec.type, rec.timestamp, rec.actions, rec.fee, rec.txHash, rec.state, rec.failureReason);
+    super(rec.type, rec.commitment, rec.timestamp, rec.actions, rec.fee, rec.txHash, rec.state, rec.failureReason);
 
     this.index = index;
     this.nullifier = nullifier;
@@ -239,8 +246,8 @@ export class HistoryStorage {
   private network: NetworkBackend;
   private subgraph?: ZkBobSubgraph;
 
-  private queuedTxs = new Map<string, HistoryRecord[]>(); // jobId -> HistoryRecord[]
-                                          //(while tx isn't processed on relayer)
+  private queuedTxs = new Map<string, HistoryRecord[]>(); // job -> HistoryRecord[]
+                                          //(while tx isn't processed on sequencer)
                                           // We don't know txHash for history records at that moment
                                           // Please keep in mind that one job contain just one txHash,
                                           // but transaction in common case could consist of several HistoryRecords
@@ -255,6 +262,7 @@ export class HistoryStorage {
   
   private currentHistory = new Map<number, HistoryRecord>();  // local history cache (index -> HistoryRecord)
   private failedHistory: HistoryRecord[] = [];  //  local failed history cache (we have no key here, just array)
+  private pendingLocalHistory: HistoryRecord[] = [];  // sent transactions which were not included in sequencer's state yet
 
 
   private syncHistoryPromise: Promise<void> | undefined;
@@ -359,7 +367,7 @@ export class HistoryStorage {
     let cursor = await this.db.transaction(TX_TABLE).store.openCursor();
     while (cursor) {
       const curRecord = cursor.value;
-      if (curRecord.actions === undefined) {
+      if (curRecord.actions === undefined || curRecord.commitment === undefined) {
         console.log(`[HistoryStorage] old history record was found! Clean deprecated records...`);
         await this.db.clear(TX_TABLE);
         await this.cleanIndexes();
@@ -434,20 +442,21 @@ export class HistoryStorage {
 
     return Array.from(this.currentHistory.values())
             .concat(this.failedHistory)
+            .concat(this.pendingLocalHistory)
             .sort((rec1, rec2) => 0 - (rec1.timestamp > rec2.timestamp ? -1 : 1));
   }
 
   // remember just sent transactions to restore history record immediately
-  public keepQueuedTransactions(txs: HistoryRecord[], jobId: string) {
-    this.queuedTxs.set(jobId, txs);
+  public keepQueuedTransactions(txs: HistoryRecord[], job: SequencerJob) {
+    this.queuedTxs.set(job.hash(), txs);
   }
 
   // A new txHash assigned for the jobId:
   // set txHash mapping for awaiting transactions
-  public setTxHashForQueuedTransactions(jobId: string, txHash: string) {
-    const records = this.queuedTxs.get(jobId);
+  public setTxHashForQueuedTransactions(job: SequencerJob, txHash: string) {
+    const records = this.queuedTxs.get(job.hash());
     if (records !== undefined) {
-      // Get history records associated with jobId
+      // Get history records associated with job
       // and assign new txHash for them
       const sentHistoryRecords: HistoryRecord[] = [];
       let oldTxHash = '';
@@ -474,15 +483,14 @@ export class HistoryStorage {
   }
 
   // Mark job as completed: remove it from 'queuedTxs' and 'sentTxs' mappings
-  public async setQueuedTransactionsCompleted(jobId: string, txHash: string) : Promise<boolean> {
-    return this.removePendingTxByJob(jobId) || 
+  public async setQueuedTransactionsCompleted(job: SequencerJob, txHash: string) : Promise<boolean> {
+    return this.removePendingTxByJob(job) || 
             this.removePendingTxByTxHash(txHash);
-
   }
 
   // mark pending transaction as failed on the relayer level (we shouldn't have txHash here)
-  public async setQueuedTransactionFailedByRelayer(jobId: string, error: string | undefined): Promise<boolean> {
-    const records = this.queuedTxs.get(jobId);
+  public async setQueuedTransactionFailedByRelayer(job: SequencerJob, error: string | undefined): Promise<boolean> {
+    const records = this.queuedTxs.get(job.hash());
     if (records) {
       // moving all records from that job to the failedHistory table
       for(const aRec of records) {
@@ -493,7 +501,7 @@ export class HistoryStorage {
         await this.db.put(TX_FAILED_TABLE, aRec);
       }    
 
-      this.removePendingTxByJob(jobId);
+      this.removePendingTxByJob(job);
 
       return true;
     }
@@ -502,7 +510,7 @@ export class HistoryStorage {
   }
 
   // mark pending transaction as failed on the relayer level
-  public async setSentTransactionFailedByPool(jobId: string, txHash: string, error: string | undefined): Promise<boolean> {
+  public async setSentTransactionFailedByPool(job: SequencerJob, txHash: string, error: string | undefined): Promise<boolean> {
     // try to locate txHash in sentTxs
     const txs = this.sentTxs.get(txHash);
     if (txs) {
@@ -514,7 +522,7 @@ export class HistoryStorage {
         await this.db.put(TX_FAILED_TABLE, oneTx);
       }    
 
-      this.removePendingTxByJob(jobId);
+      this.removePendingTxByJob(job);
       this.removePendingTxByTxHash(txHash);
       this.removeHistoryPendingRecordsByTxHash(txHash);
 
@@ -522,8 +530,8 @@ export class HistoryStorage {
     }
 
     // txHash of that transaction can be changed
-    // => locate it in queuedTxs map by jobId
-    const records = this.queuedTxs.get(jobId);
+    // => locate it in queuedTxs map by job
+    const records = this.queuedTxs.get(job.hash());
     if (records) {
       // moving all records from that job to the failedHistory table
       let oldTxHash = '';
@@ -539,7 +547,7 @@ export class HistoryStorage {
         await this.db.put(TX_FAILED_TABLE, aRec);
       }    
 
-      this.removePendingTxByJob(jobId);
+      this.removePendingTxByJob(job);
       if (oldTxHash.startsWith('0x')) {
         this.removeHistoryPendingRecordsByTxHash(oldTxHash);
       }
@@ -550,10 +558,10 @@ export class HistoryStorage {
     return false;
   }
 
-  private removePendingTxByJob(jobId: string): boolean {
-    const records = this.queuedTxs.get(jobId);
+  private removePendingTxByJob(job: SequencerJob): boolean {
+    const records = this.queuedTxs.get(job.hash());
     if (records) {
-      this.queuedTxs.delete(jobId);
+      this.queuedTxs.delete(job.hash());
 
       // remove associated records from the sentTxs
       for(const aRec of records) {
@@ -573,10 +581,10 @@ export class HistoryStorage {
    let res = this.sentTxs.delete(txHash);
 
     // remove queued txs with the same txHash
-    this.queuedTxs.forEach((records, jobId) => {
+    this.queuedTxs.forEach((records, jobHash) => {
       for (const aRec of records) {
         if (aRec.txHash == txHash) {
-          this.queuedTxs.delete(jobId);
+          this.queuedTxs.delete(jobHash);
           res = true;
         }
       }
@@ -792,7 +800,7 @@ export class HistoryStorage {
     this.syncIndex = -1;
   }
 
-  // ------- Private rouutines --------
+  // ------- Private routines --------
 
   // Returns true if there is all unparsed memo were converted to the HistoryRecords
   // If one or more transactions were postponed due to recoverable error - return false
@@ -875,6 +883,19 @@ export class HistoryStorage {
 
       console.log(`[HistoryStorage] memo sync is not required: already up-to-date (on index ${this.syncIndex + 1})`);
     }
+
+    // we also should take into account locally sent transactions which were not appeared
+    // in optimistic or stable state received from the sequencer
+    const commitments = [...this.currentHistory.values()].map((rec) => rec.commitment);
+    this.pendingLocalHistory = [];
+    for (const [txHash, records] of this.sentTxs.entries()) {
+      for (const aRec of records) {
+        if (commitments.includes(aRec.commitment) == false) {
+          this.pendingLocalHistory.push(aRec);
+        }
+      }
+    }
+    
 
     return this.unparsedMemo.size == 0;
   }
@@ -978,7 +999,8 @@ export class HistoryStorage {
               details.feeAmount,
               details.timestamp,
               details.txHash,
-              pending
+              pending,
+              BigInt(details.commitment),
             );
             allRecords.push(HistoryRecordIdx.create(rec, txDetails.index));
           } else if (details.txType == RegularTxType.Transfer) {
@@ -1000,7 +1022,8 @@ export class HistoryStorage {
                   details.timestamp,
                   details.txHash,
                   pending,
-                  async (addr) => this.state.isOwnAddress(addr)
+                  async (addr) => this.state.isOwnAddress(addr),
+                  BigInt(details.commitment),
                 );
                 allRecords.push(HistoryRecordIdx.create(rec, memo.index));
               }
@@ -1021,7 +1044,8 @@ export class HistoryStorage {
               details.feeAmount,
               details.timestamp,
               details.txHash,
-              pending
+              pending,
+              BigInt(details.commitment),
             );
             allRecords.push(HistoryRecordIdx.create(rec, memo.index));
           } else {

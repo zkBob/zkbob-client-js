@@ -5,9 +5,9 @@ import { NetworkBackend, PreparedTransaction, L1TxState} from '..';
 import { InternalError } from '../../errors';
 import { accountingABI, ddContractABI, poolContractABI, tokenABI } from './evm-abi';
 import bs58 from 'bs58';
-import { DDBatchTxDetails, RegularTxDetails, PoolTxDetails, RegularTxType, PoolTxType, DirectDeposit, DirectDepositState } from '../../tx';
+import { DDBatchTxDetails, RegularTxDetails, PoolTxDetails, RegularTxType, PoolTxType, DirectDeposit, DirectDepositState, TxCalldataVersion } from '../../tx';
 import { addHexPrefix, bufToHex, hexToBuf, toTwosComplementHex, truncateHexPrefix } from '../../utils';
-import { CALLDATA_BASE_LENGTH, decodeEvmCalldata, estimateEvmCalldataLength, getCiphertext } from './calldata';
+import { CalldataInfo, parseTransactCalldata, parseDirectDepositCalldata } from './calldata';
 import { recoverTypedSignature, signTypedData, SignTypedDataVersion,
         personalSign, recoverPersonalSignature } from '@metamask/eth-sig-util'
 import { privateToAddress, bufferToHex, isHexPrefixed } from '@ethereumjs/util';
@@ -23,6 +23,8 @@ const ZERO_ADDRESS1 = '0x0000000000000000000000000000000000000001';
 export enum PoolSelector {
     Transact = "af989083",
     AppendDirectDeposit = "1dc4cb33",
+    AppendDirectDepositV2 = "e6b14272",
+    TransactV2 = "5fd28f8c",
 }
 
 export enum ZkBobContractType {
@@ -785,73 +787,28 @@ export class EvmNetwork extends MultiRpcManager implements NetworkBackend, RpcMa
                     }
 
                     const txSelector = txData.slice(0, 8).toLowerCase();
-                    if (txSelector == PoolSelector.Transact) {
-                        const tx = decodeEvmCalldata(txData);
-                        const feeAmount = BigInt('0x' + tx.memo.slice(0, 16));
-                        
-                        const txInfo = new RegularTxDetails();
-                        txInfo.txType = tx.txType;
-                        txInfo.tokenAmount = tx.tokenAmount;
-                        txInfo.feeAmount = feeAmount;
+                    if (txSelector == PoolSelector.Transact || txSelector == PoolSelector.TransactV2) {
+                        const txInfo = await parseTransactCalldata(txData, this);
                         txInfo.txHash = poolTxHash;
-                        txInfo.isMined = isMined
+                        txInfo.isMined = isMined;
                         txInfo.timestamp = timestamp;
-                        txInfo.nullifier = '0x' + toTwosComplementHex(BigInt((tx.nullifier)), 32);
-                        txInfo.commitment = '0x' + toTwosComplementHex(BigInt((tx.outCommit)), 32);
-                        txInfo.ciphertext = getCiphertext(tx);
-
-                        // additional tx-specific fields for deposits and withdrawals
-                        if (tx.txType == RegularTxType.Deposit) {
-                            if (tx.extra && tx.extra.length >= 128) {
-                                const fullSig = this.toCanonicalSignature(tx.extra.slice(0, 128));
-                                txInfo.depositAddr = await this.recoverSigner(txInfo.nullifier, fullSig);
-                            } else {
-                                // incorrect signature
-                                throw new InternalError(`No signature for approve deposit`);
-                            }
-                        } else if (tx.txType == RegularTxType.BridgeDeposit) {
-                            txInfo.depositAddr = this.bytesToAddress(hexToBuf(tx.memo.slice(32, 72), 20));
-                        } else if (tx.txType == RegularTxType.Withdraw) {
-                            txInfo.withdrawAddr = this.bytesToAddress(hexToBuf(tx.memo.slice(32, 72), 20));
-                        }
-
+                        
                         return {
                             poolTxType: PoolTxType.Regular,
                             details: txInfo,
                             index,
                         };
-                    } else if (txSelector == PoolSelector.AppendDirectDeposit) {
-                        const txInfo = new DDBatchTxDetails();
+                    } else if (txSelector == PoolSelector.AppendDirectDeposit || txSelector == PoolSelector.AppendDirectDepositV2) {
+                        const ddQueue = await this.getDirectDepositQueueContract(transactionObj.to!)
+                        const txInfo = await parseDirectDepositCalldata(txData, ddQueue, this, state);
                         txInfo.txHash = poolTxHash;
                         txInfo.isMined = isMined;
                         txInfo.timestamp = timestamp;
-                        txInfo.deposits = [];
 
-                        // get appendDirectDeposits input ABI
-                        const ddAbi = poolContractABI.find((val) => val.name == 'appendDirectDeposits');
-                        if (ddAbi && ddAbi.inputs) {
-                            const decoded = this.activeWeb3().eth.abi.decodeParameters(ddAbi.inputs, txData.slice(8));
-                            if (decoded._indices && Array.isArray(decoded._indices) && transactionObj.to) {
-                                const ddQueue = await this.getDirectDepositQueueContract(transactionObj.to)
-                                const directDeposits = (await Promise.all(decoded._indices.map(async (ddIdx) => {
-                                    const dd = await this.getDirectDeposit(ddQueue, Number(ddIdx), state);
-                                    const isOwn = dd ? await state.isOwnAddress(dd.destination) : false;
-                                    return {dd, isOwn}
-                                })))
-                                .filter((val) => val.dd && val.isOwn )  // exclude not own DDs
-                                .map((val) => {
-                                    const aDD = val.dd as DirectDeposit;
-                                    aDD.txHash = poolTxHash;
-                                    aDD.timestamp = timestamp;
-                                    return aDD;
-                                });
-                                txInfo.deposits = directDeposits;
-                            } else {
-                                console.error(`Could not decode appendDirectDeposits calldata`);
-                            }
-                        } else {
-                            console.error(`Could not find appendDirectDeposits method input ABI`);
-                        }
+                        txInfo.deposits.forEach((aDeposit) => {
+                            aDeposit.txHash = poolTxHash;
+                            aDeposit.timestamp = timestamp;
+                        })
 
                         return {
                             poolTxType: PoolTxType.DirectDepositBatch,
@@ -874,12 +831,12 @@ export class EvmNetwork extends MultiRpcManager implements NetworkBackend, RpcMa
         return null;
     }
 
-    public calldataBaseLength(): number {
-        return CALLDATA_BASE_LENGTH;
+    public calldataBaseLength(ver: TxCalldataVersion): number {
+        return CalldataInfo.baseLength(ver);
     }
 
-    public estimateCalldataLength(txType: RegularTxType, notesCnt: number, extraDataLen: number = 0): number {
-        return estimateEvmCalldataLength(txType, notesCnt, extraDataLen)
+    public estimateCalldataLength(ver: TxCalldataVersion, txType: RegularTxType, notesCnt: number, extraDataLen: number = 0): number {
+        return CalldataInfo.estimateEvmCalldataLength(ver, txType, notesCnt, extraDataLen)
     }
 
     public async getTransactionState(txHash: string): Promise<L1TxState> {
@@ -905,6 +862,10 @@ export class EvmNetwork extends MultiRpcManager implements NetworkBackend, RpcMa
         }
 
         return L1TxState.NotFound;
+    }
+
+    public async abiDecodeParameters(abi: any, encodedParams: string): Promise<any> {
+        return this.activeWeb3().eth.abi.decodeParameters(abi.inputs, encodedParams);
     }
 
     // ----------------------=========< Syncing >=========----------------------

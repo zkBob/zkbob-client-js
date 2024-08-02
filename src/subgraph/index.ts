@@ -4,7 +4,7 @@ import { hostedServiceDefaultURL } from "./resolvers";
 import { ZkBobState } from "../state";
 import { InternalError } from "../errors";
 import { DDBatchTxDetails, DirectDeposit, DirectDepositState,
-         PoolTxDetails, PoolTxMinimal, PoolTxType, RegularTxDetails, RegularTxType
+         PoolTxDetails, PoolTxMinimal, PoolTxType, RegularTxDetails, RegularTxType, TxState
         } from "../tx";
 import { decodeEvmCalldata } from '../networks/evm/calldata';
 import { DepositSignerFactory } from '../signers/signer-factory';
@@ -257,7 +257,7 @@ export class ZkBobSubgraph {
                 commitment: BigInt(tx.zk.out_commit).toString(16).padStart(64, '0'),  // should be without hex prefix
                 txHash: tx.tx,  // blockchain transaction hash
                 memo: truncateHexPrefix(tx.message),   // starting from items_num, without hex prefix
-                isMined: true,  // subgraph index only mined transactions
+                state: TxState.Finalized,  // subgraph index only mined transactions
               }
         }));
     }

@@ -1,4 +1,5 @@
 import { ServiceType } from "./services/common";
+import { SequencerJob } from "./services/relayer";
 
 export class BobError extends Error {
     constructor(message: string) {
@@ -101,14 +102,14 @@ export class NetworkError extends BobError {
 }
 
 export class RelayerJobError extends BobError {
-    constructor(public jobId: number, public reason: string) {
-        super(`Job ${jobId} failed with reason: ${reason}`);
+    constructor(public job: SequencerJob, public reason: string) {
+        super(`Job ${job.toString()} failed with reason: ${reason}`);
     }
 }
 
 export class PoolJobError extends BobError {
-    constructor(public jobId: number, public txHash: string, public reason: string) {
-        super(`Tx ${txHash} (job ${jobId}) was reverted on the contract with reason: ${reason}`);
+    constructor(public job: SequencerJob, public txHash: string, public reason: string) {
+        super(`Tx ${txHash} (job ${job.toString()}) was reverted on the contract with reason: ${reason}`);
     }
 }
 
