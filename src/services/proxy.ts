@@ -17,6 +17,13 @@ export function compareProxyFee(fee1: ProxyFee, fee2: ProxyFee): boolean {
     return r1 < r2;
 }
 
+function isProxyFeeEqual(fee1: ProxyFee, fee2: ProxyFee): boolean {
+    const r1 = evaluateRelayerFeeValue(fee1) + fee1.proverFee;
+    const r2 = evaluateRelayerFeeValue(fee2) + fee2.proverFee;
+
+    return r1 == r2;
+}
+
 export class ZkBobProxy extends ZkBobRelayer {
     protected findOptimalProxyTs: number;
 
@@ -145,15 +152,19 @@ export class ZkBobProxy extends ZkBobRelayer {
                 compareProxyFee(proxy.fee, minFeeProxy.fee) ? proxy : minFeeProxy
             );
 
-            if (this.curIdx != minFeeSeq.index) {
-                console.log(`ZkBobProxy: switching sequencer to ${minFeeSeq.index} (${this.url(minFeeSeq.index)}) due to best fee`);
-                this.curIdx = minFeeSeq.index
+            // Getting a random sequencer among the cheapest
+            const cheapSequencers = fees.filter(aFee => isProxyFeeEqual(aFee.fee, minFeeSeq.fee))
+            const selectedSequencer = cheapSequencers[Math.floor(Math.random() * cheapSequencers.length)];
+
+            if (this.curIdx != selectedSequencer.index) {
+                console.log(`ZkBobProxy: switching sequencer to ${selectedSequencer.index} (${this.url(selectedSequencer.index)}) due to the best fee`);
+                this.curIdx = selectedSequencer.index
                 this.findOptimalProxyTs = Date.now();
             } else {
                 console.log(`ZkBobProxy: the current sequencer with index ${this.curIdx} is still the best choice`);
             }
 
-            return minFeeSeq.fee;
+            return selectedSequencer.fee;
         }
 
         throw new InternalError('ZkBobProxy: cannot find live sequencer')
