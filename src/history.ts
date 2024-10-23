@@ -471,21 +471,16 @@ export class HistoryStorage {
         sentHistoryRecords.push(aRec);
       }
 
-      if (oldTxHash != txHash) {
-        // Here is a case when txHash has been changed for existing job:
-        // we should remove records from sentTxs with old txHash
-        this.removePendingTxByTxHash(oldTxHash);
-      }
-
       // set history records in the sentTx mapping
+      // (the records with the old txHashes are still alive)
       this.sentTxs.set(txHash, sentHistoryRecords);
     }
   }
 
-  // Mark job as completed: remove it from 'queuedTxs' and 'sentTxs' mappings
-  public async setQueuedTransactionsCompleted(job: SequencerJob, txHash: string) : Promise<boolean> {
-    return this.removePendingTxByJob(job) || 
-            this.removePendingTxByTxHash(txHash);
+  // Mark job as completed: do not remove associated records, just update txHash if needed
+  // An associated records from queuedTxs and sentTxs will be removed automatically on history sync
+  public async setQueuedTransactionsCompleted(job: SequencerJob, txHash: string) {
+    return this.setTxHashForQueuedTransactions(job, txHash);
   }
 
   // mark pending transaction as failed on the relayer level (we shouldn't have txHash here)
@@ -584,6 +579,32 @@ export class HistoryStorage {
     this.queuedTxs.forEach((records, jobHash) => {
       for (const aRec of records) {
         if (aRec.txHash == txHash) {
+          this.queuedTxs.delete(jobHash);
+          res = true;
+        }
+      }
+    });
+
+    return res;
+  }
+
+  private removePendingTxByCommit(commitment: bigint): boolean {
+    let res = false;
+
+    // remove records from the sentTxs by given commitment
+    this.sentTxs.forEach((records, txHash) => {
+      for (const aRec of records) {
+        if (aRec.commitment == commitment) {
+          this.sentTxs.delete(txHash);
+          res = true;
+        }
+      }
+    });
+
+    // remove queued txs with the same commitments
+    this.queuedTxs.forEach((records, jobHash) => {
+      for (const aRec of records) {
+        if (aRec.commitment == commitment) {
           this.queuedTxs.delete(jobHash);
           res = true;
         }
@@ -1052,9 +1073,9 @@ export class HistoryStorage {
             throw new InternalError(`[HistoryStorage] Unknown transaction type ${details.txType}`)
           }
 
-          if (!pending || (pending && details.isMined)) {
-            // if tx is in pending state - remove it only on success
-            this.removePendingTxByTxHash(details.txHash);
+          if (!pending) {
+            // remove non-pending tx from the aux queues
+            this.removePendingTxByCommit(BigInt(details.commitment));
           }
         } else if (txDetails.poolTxType == PoolTxType.DirectDepositBatch && txDetails.details instanceof DDBatchTxDetails) {
           // transaction is DD batch on the pool
