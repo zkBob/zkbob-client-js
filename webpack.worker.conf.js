@@ -7,6 +7,13 @@ module.exports = {
   module: {
     rules: [
       {
+        test: /\.m?js$/,
+        include: path.resolve(__dirname, 'node_modules/libzkbob-rs-wasm-web-mt'),
+        resolve: {
+          fullySpecified: false,
+        },
+      },
+      {
         test: /\.tsx?$/,
         use: 'ts-loader',
         exclude: /node_modules/,
